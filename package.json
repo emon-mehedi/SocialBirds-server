@@ -1,0 +1,12 @@
+{
+  "name": "socialbirds-server",
+  "version": "1.0.0",
+  "description": "Social events to create, join and track",
+  "license": "ISC",
+  "author": "Mehedi Emon",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
