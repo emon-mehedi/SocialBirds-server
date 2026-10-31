@@ -60,6 +60,27 @@ app.delete('/events/:id', async (req, res) => {
   res.send(result)
 })
 
+//updating dynamic events
+app.patch('/events/:id', async (req, res) => {
+  const id = req.params.id;
+  const updatedEvent = req.body;
+  console.log('updating event with id', id, 'with data', updatedEvent);
+  const filter = { _id: new ObjectId(id) };
+  const options = { upsert: true };
+  const updateDoc = {
+    $set: {
+      title: updatedEvent.title,
+      description: updatedEvent.description,
+      eventType: updatedEvent.eventType,
+      thumbnailImageUrl: updatedEvent.thumbnailImageUrl,
+      location: updatedEvent.location,
+      eventDate: updatedEvent.eventDate
+    }
+  }
+  const result = await events.updateOne(filter, updateDoc, options);
+  res.send(result)
+})
+
 
 app.get('/', (req,res)=>{
   res.send('Welcome to SocialBirds')
