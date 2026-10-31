@@ -1,0 +1,47 @@
+import express from 'express';
+import cors from 'cors';
+import 'dotenv/config'
+import { MongoClient, ObjectId } from 'mongodb';
+
+const app = express();
+const port = process.env.PORT||6000;
+
+//middleware
+app.use(cors());
+app.use(express.json());
+
+//connecting to mongodb
+const client = new MongoClient(process.env.MONGO_CLIENT_URI);
+export async function connectToMongoDB() {
+  try {
+    await client.connect();
+    console.log("You successfully connected to MongoDB!");
+    return client;
+  } catch (err) {
+    console.dir(err);
+  }
+}
+
+//accessing mongodb collection
+const connectedClient =await connectToMongoDB();
+const db = connectedClient.db('SocialBirds');
+const events= db.collection('events');
+
+//accessing events from mongodb
+app.get('/events',async(req,res)=>{
+  const cursor = events.find({});
+  const allEvents = await cursor.toArray();
+  res.send(allEvents)
+})
+
+
+
+
+
+app.get('/', (req,res)=>{
+  res.send('Welcome to SocialBirds')
+})
+
+app.listen(port,()=>{
+  console.log(`App is listening on port ${port}`);
+})
