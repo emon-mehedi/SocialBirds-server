@@ -43,6 +43,15 @@ app.post('/events', async (req, res) => {
   res.send(result)
 })
 
+//making dynamic events
+app.get('/events/:id', async (req, res) => {
+  console.log('params in the server', req.params);
+  const id = req.params.id;
+  const querry = { _id: new ObjectId(id) };
+  const result = await events.findOne(querry);
+  res.send(result)
+})
+
 
 
 app.get('/', (req,res)=>{
