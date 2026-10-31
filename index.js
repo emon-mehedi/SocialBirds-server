@@ -35,6 +35,13 @@ app.get('/events',async(req,res)=>{
 })
 
 
+//storing events in mongodb
+app.post('/events', async (req, res) => {
+  const newEvent = req.body;
+  console.log("adding new event", newEvent);
+  const result = await events.insertOne(newEvent);
+  res.send(result)
+})
 
 
 
