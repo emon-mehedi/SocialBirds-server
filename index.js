@@ -52,6 +52,13 @@ app.get('/events/:id', async (req, res) => {
   res.send(result)
 })
 
+//deleting dynamic events
+app.delete('/events/:id', async (req, res) => {
+  const id = req.params.id;
+  const querry = { _id: new ObjectId(id) };
+  const result = await events.deleteOne(querry);
+  res.send(result)
+})
 
 
 app.get('/', (req,res)=>{
