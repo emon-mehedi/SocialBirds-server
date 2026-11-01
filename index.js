@@ -26,6 +26,7 @@ export async function connectToMongoDB() {
 const connectedClient =await connectToMongoDB();
 const db = connectedClient.db('SocialBirds');
 const events= db.collection('events');
+const joinedEvents= db.collection('joinedEvents')
 
 //accessing events from mongodb
 app.get('/events',async(req,res)=>{
@@ -88,6 +89,28 @@ app.get("/myEvents/:email", async (req, res) => {
   const result = await events.find({ email: email }).toArray();
   res.send(result);
 });
+
+
+//get, post and joined events in mongodb
+app.post('/joinedEvents', async (req, res) => {
+  const newEvent = req.body;
+  console.log("joining new event", newEvent);
+  const result = await joinedEvents.insertOne(newEvent);
+  res.send(result)
+})
+
+app.get("/joinedEvents/:email", async (req, res) => {
+  const { email } = req.params;
+  const result = await joinedEvents.find({ email: email }).toArray();
+  res.send(result);
+});
+
+app.delete('/jonedEvents/:id', async (req, res) => {
+  const id = req.params.id;
+  const querry = { _id: new ObjectId(id) };
+  const result = await joinedEvents.deleteOne(querry);
+  res.send(result)
+})
 
 
 app.get('/', (req,res)=>{
