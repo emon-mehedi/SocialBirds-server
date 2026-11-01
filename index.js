@@ -82,6 +82,14 @@ app.patch('/events/:id', async (req, res) => {
 })
 
 
+//get my events from mongodb
+app.get("/myEvents/:email", async (req, res) => {
+  const { email } = req.params;
+  const result = await events.find({ email: email }).toArray();
+  res.send(result);
+});
+
+
 app.get('/', (req,res)=>{
   res.send('Welcome to SocialBirds')
 })

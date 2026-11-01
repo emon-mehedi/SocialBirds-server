@@ -7,6 +7,8 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "build": "echo 'Build ok'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
