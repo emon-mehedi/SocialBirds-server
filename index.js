@@ -91,11 +91,11 @@ app.get("/myEvents/:email", async (req, res) => {
 });
 
 
-//get, post and joined events in mongodb
+//get, post and delete joined events in mongodb
 app.post('/joinedEvents', async (req, res) => {
-  const newEvent = req.body;
+  const joinedEvent = req.body;
   console.log("joining new event", newEvent);
-  const result = await joinedEvents.insertOne(newEvent);
+  const result = await joinedEvents.insertOne(joinedEvent);
   res.send(result)
 })
 
@@ -107,8 +107,7 @@ app.get("/joinedEvents/:email", async (req, res) => {
 
 app.delete('/joinedEvents/:id', async (req, res) => {
   const id = req.params.id;
-  const querry = { _id: new ObjectId(id) };
-  const result = await joinedEvents.deleteOne(querry);
+  const result = await joinedEvents.deleteOne({_id : id});
   res.send(result)
 })
 
