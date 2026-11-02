@@ -105,7 +105,7 @@ app.get("/joinedEvents/:email", async (req, res) => {
   res.send(result);
 });
 
-app.delete('/jonedEvents/:id', async (req, res) => {
+app.delete('/joinedEvents/:id', async (req, res) => {
   const id = req.params.id;
   const querry = { _id: new ObjectId(id) };
   const result = await joinedEvents.deleteOne(querry);
