@@ -94,7 +94,7 @@ app.get("/myEvents/:email", async (req, res) => {
 //get, post and delete joined events in mongodb
 app.post('/joinedEvents', async (req, res) => {
   const joinedEvent = req.body;
-  console.log("joining new event", newEvent);
+  console.log("joining new event", joinedEvent);
   const result = await joinedEvents.insertOne(joinedEvent);
   res.send(result)
 })
