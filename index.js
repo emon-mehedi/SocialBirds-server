@@ -1,35 +1,44 @@
 import express from 'express';
 import cors from 'cors';
-import 'dotenv/config'
+import 'dotenv/config';
 import { MongoClient, ObjectId } from 'mongodb';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-const app = express();
-const port = process.env.PORT||6000;
 
-//middleware
+const app = express();
+const port = process.env.PORT || 5000;
+
 app.use(cors());
 app.use(express.json());
 
-//connecting to mongodb
 const client = new MongoClient(process.env.MONGO_CLIENT_URI);
+
 export async function connectToMongoDB() {
   try {
     await client.connect();
-    console.log("You successfully connected to MongoDB!");
+    console.log('You successfully connected to MongoDB!');
     return client;
   } catch (err) {
     console.dir(err);
   }
 }
 
-//accessing mongodb collection
-const connectedClient =await connectToMongoDB();
+const connectedClient = await connectToMongoDB();
 const db = connectedClient.db('SocialBirds');
-const events= db.collection('events');
-const joinedEvents= db.collection('joinedEvents')
+const events = db.collection('events');
+const joinedEvents = db.collection('joinedEvents');
 
-//jwk section
+// A user can only join the same event once
+try {
+  await joinedEvents.createIndex({ eventId: 1, email: 1 }, { unique: true });
+} catch (err) {
+  console.log('Could not create index:', err.message);
+}
+
+// JWT verification. token created by BetterAuth on client side
+// AUTH_URL = URL of the CLIENT app
+const AUTH_URL = (process.env.AUTH_URL || '').replace(/\/$/, '');
 const JWKS = createRemoteJWKSet(new URL(`${process.env.AUTH_URL}/api/auth/jwks`));
+
 const verifyJWT = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -39,11 +48,10 @@ const verifyJWT = async (req, res, next) => {
 
   try {
     const { payload } = await jwtVerify(token, JWKS, {
-      issuer: process.env.AUTH_URL,
-      audience: process.env.AUTH_URL,
+      issuer: AUTH_URL,
+      audience: AUTH_URL,
     });
-
-    req.user = payload;
+    req.user = payload; // payload has the logged in user's email, name, id...
     next();
   } catch (err) {
     console.log('JWT verification failed:', err.message);
@@ -51,86 +59,159 @@ const verifyJWT = async (req, res, next) => {
   }
 };
 
+//helper functions
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-//accessing events from mongodb
-app.get('/events',async(req,res)=>{
-  const cursor = events.find({});
-  const allEvents = await cursor.toArray();
-  res.send(allEvents)
-})
+// Checks the event data sent by the client.
+function validateEvent(body) {
+  const title = String(body.title ?? '').trim();
+  const description = String(body.description ?? '').trim();
+  const category = String(body.category ?? '').trim();
+  const thumbnailImageUrl = String(body.thumbnailImageUrl ?? '').trim();
+  const location = String(body.location ?? '').trim();
+  const date = String(body.date ?? '').trim();
+
+  const errors = [];
+
+  if (title.length < 3) errors.push('Title must be at least 3 characters');
+  if (description.length < 10) errors.push('Description must be at least 10 characters');
+  if (!category) errors.push('Event type is required');
+  if (!location) errors.push('Location is required');
+
+  // thumbnail must be a real http/https link
+  try {
+    const url = new URL(thumbnailImageUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error();
+  } catch {
+    errors.push('Thumbnail must be a valid image URL');
+  }
+
+  // date must look like 2026-11-20
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+    errors.push('Date is not valid');
+  }
+
+  return {
+    errors,
+    data: { title, description, category, thumbnailImageUrl, location, date },
+  };
+}
 
 
-//storing events in mongodb
+app.get('/events', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 0; // 0 means "no limit"
+  const query = { date: { $gte: todayString() } };
+
+  const result = await events.find(query).sort({ date: 1 }).limit(limit).toArray();
+  res.send(result);
+});
+
+// Create an event (logged in users only)
 app.post('/events', verifyJWT, async (req, res) => {
-  // CHANGED: email comes from the verified token, not from the client,
-  // so nobody can create an event in someone else's name.
-  const newEvent = { ...req.body, email: req.user.email };
-  console.log("adding new event", newEvent);
+  const { errors, data } = validateEvent(req.body);
+
+  if (errors.length > 0) {
+    return res.status(400).send({ message: errors[0], errors });
+  }
+  if (data.date < todayString()) {
+    return res.status(400).send({ message: 'Event date must be today or in the future' });
+  }
+
+  const newEvent = {
+    ...data,
+    // email and name come from the verified token, not from the client,
+    // so nobody can create an event in someone else's name.
+    email: req.user.email,
+    creatorName: req.user.name,
+    createdAt: new Date(),
+  };
+
   const result = await events.insertOne(newEvent);
-  res.send(result)
-})
+  res.send(result);
+});
 
-//making dynamic events
+// One event (public). Also tells how many people joined.
 app.get('/events/:id', async (req, res) => {
-  console.log('params in the server', req.params);
   const id = req.params.id;
-  const querry = { _id: new ObjectId(id) };
-  const result = await events.findOne(querry);
-  res.send(result)
-})
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: 'Event not found' });
+  }
 
-//deleting dynamic events
+  const event = await events.findOne({ _id: new ObjectId(id) });
+  if (!event) {
+    return res.status(404).send({ message: 'Event not found' });
+  }
+
+  const participants = await joinedEvents.countDocuments({ eventId: id });
+  res.send({ ...event, participants });
+});
+
+// Update an event (only the owner can do it)
+app.patch('/events/:id', verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: 'Event not found' });
+  }
+
+  const filter = { _id: new ObjectId(id), email: req.user.email };
+  const existing = await events.findOne(filter);
+  if (!existing) {
+    return res.status(403).send({ message: 'Event not found or it is not your event' });
+  }
+
+  const { errors, data } = validateEvent(req.body);
+  if (errors.length > 0) {
+    return res.status(400).send({ message: errors[0], errors });
+  }
+  // A new date can't be in the past 
+  if (data.date !== existing.date && data.date < todayString()) {
+    return res.status(400).send({ message: 'Event date must be today or in the future' });
+  }
+
+  const result = await events.updateOne(filter, { $set: data });
+  res.send(result);
+});
+
+// Delete an event 
 app.delete('/events/:id', verifyJWT, async (req, res) => {
   const id = req.params.id;
-  const querry = { _id: new ObjectId(id), email: req.user.email };
-  const result = await events.deleteOne(querry);
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: 'Event not found' });
+  }
+
+  const result = await events.deleteOne({ _id: new ObjectId(id), email: req.user.email });
   if (result.deletedCount === 0) {
     return res.status(403).send({ message: 'Event not found or it is not your event' });
   }
-  res.send(result)
-})
 
-//updating dynamic events
-app.patch('/events/:id', verifyJWT, async (req, res) => {
-  const id = req.params.id;
-  const updatedEvent = req.body;
-  console.log('updating event with id', id, 'with data', updatedEvent);
-  const filter = { _id: new ObjectId(id), email: req.user.email };
-  const updateDoc = {
-    $set: {
-      title: updatedEvent.title,
-      description: updatedEvent.description,
-      category: updatedEvent.category,
-      thumbnailImageUrl: updatedEvent.thumbnailImageUrl,
-      location: updatedEvent.location,
-      date: updatedEvent.date
-    }
-  }
-  const result = await events.updateOne(filter, updateDoc);
-  if (result.matchedCount === 0) {
-    return res.status(403).send({ message: 'Event not found or it is not your event' });
-  }
-  res.send(result)
-})
+  // also remove the "joined" records of this event
+  await joinedEvents.deleteMany({ eventId: id });
+  res.send(result);
+});
 
-
-//get my events from mongodb
-app.get("/myEvents", verifyJWT, async (req, res) => {
-  const result = await events.find({ email: req.user.email }).toArray();
+// Events created by the logged in user 
+app.get('/myEvents', verifyJWT, async (req, res) => {
+  const result = await events.find({ email: req.user.email }).sort({ date: 1 }).toArray();
   res.send(result);
 });
 
 
 
-// all events the logged-in user joined
-app.get("/joinedEvents", verifyJWT, async (req, res) => {
+// All events the logged in user joined
+app.get('/joinedEvents', verifyJWT, async (req, res) => {
   const joined = await joinedEvents.find({ email: req.user.email }).toArray();
-  const eventIds = joined.map((j) => new ObjectId(j.eventId));
-  const result = await events.find({ _id: { $in: eventIds } }).toArray();
+  const eventIds = joined
+    .filter((j) => ObjectId.isValid(j.eventId))
+    .map((j) => new ObjectId(j.eventId));
+
+  const result = await events.find({ _id: { $in: eventIds } }).sort({ date: 1 }).toArray();
   res.send(result);
 });
 
-app.get("/joinedEvents/check/:eventId", verifyJWT, async (req, res) => {
+// Did this user already join this event?
+app.get('/joinedEvents/check/:eventId', verifyJWT, async (req, res) => {
   const found = await joinedEvents.findOne({
     eventId: req.params.eventId,
     email: req.user.email,
@@ -138,11 +219,10 @@ app.get("/joinedEvents/check/:eventId", verifyJWT, async (req, res) => {
   res.send({ joined: !!found });
 });
 
-// join an event
+// Join an event
 app.post('/joinedEvents', verifyJWT, async (req, res) => {
   const { eventId } = req.body;
   const email = req.user.email;
-  console.log("joining event", eventId, "for", email);
 
   if (!ObjectId.isValid(eventId)) {
     return res.status(400).send({ message: 'Invalid event id' });
@@ -151,33 +231,47 @@ app.post('/joinedEvents', verifyJWT, async (req, res) => {
   if (!event) {
     return res.status(404).send({ message: 'Event not found' });
   }
+  if (event.date < todayString()) {
+    return res.status(400).send({ message: 'This event has already ended' });
+  }
 
-  // search first: only add if this user has not joined this event yet
+  // search 
   const alreadyJoined = await joinedEvents.findOne({ eventId, email });
   if (alreadyJoined) {
     return res.send({ joined: true, message: 'Already joined' });
   }
 
-  const result = await joinedEvents.insertOne({ eventId, email, joinedAt: new Date() });
-  res.send(result)
-})
+  const result = await joinedEvents.insertOne({
+    eventId,
+    email,
+    userName: req.user.name,
+    eventTitle: event.title,
+    joinedAt: new Date(),
+  });
+  res.send(result);
+});
 
-// cancel joining
+// Cancel joining
 app.delete('/joinedEvents/:eventId', verifyJWT, async (req, res) => {
   const result = await joinedEvents.deleteOne({
     eventId: req.params.eventId,
     email: req.user.email,
   });
-  res.send(result)
-})
+  res.send(result);
+});
 
+app.get('/', (req, res) => {
+  res.send('Welcome to SocialBirds');
+});
 
-app.get('/', (req,res)=>{
-  res.send('Welcome to SocialBirds')
-})
+// If something crashes, send a JSON message instead of an HTML error page
+app.use((err, req, res, next) => {
+  console.log('Server error:', err.message);
+  res.status(500).send({ message: 'Something went wrong on the server' });
+});
 
-app.listen(port,()=>{
+app.listen(port, () => {
   console.log(`App is listening on port ${port}`);
-})
+});
 
-export default app
+export default app;
